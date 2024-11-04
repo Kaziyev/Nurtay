@@ -113,6 +113,10 @@ void setColorFromIndex() {
 
 // RGB LED Mode Functions (breathing, flashing, cycle, rainbow)
 void setBreathingEffect() {
+  if (!isLightOn) {
+    applyColor(0, 0, 0);
+    return;
+  }
   static int brightnessValue = 0;
   static bool increasing = true;
   static int colorIndex = 0;
@@ -145,6 +149,10 @@ void setBreathingEffect() {
 }
 
 void setFlashingMode() {
+  if (!isLightOn) {
+    applyColor(0, 0, 0);
+    return;
+  }
   static bool isOn = false;
   unsigned long currentMillis = millis();
 
@@ -161,6 +169,10 @@ void setFlashingMode() {
 }
 
 void setColorCycle() {
+  if (!isLightOn) {
+    applyColor(0, 0, 0);
+    return;
+  }
   static int targetRed = 255, targetGreen = 0, targetBlue = 0;
   unsigned long currentMillis = millis();
 
@@ -187,6 +199,10 @@ void setColorCycle() {
 }
 
 void setRainbowMode() {
+  if (!isLightOn) {
+    applyColor(0, 0, 0);
+    return;
+  }
   static int colorIndex = 0;
   unsigned long currentMillis = millis();
 
@@ -222,6 +238,12 @@ void setStaticColor() {
 }
 
 void updateMode() {
+  if (!isLightOn) {
+    // Turn off all LEDs when the light is off
+    applyColor(0, 0, 0);
+    return;  // Exit the function if the light is off
+  }
+
   if (currentMode == "static") {
     setStaticColor();
   } else if (currentMode == "breath") {
@@ -274,13 +296,11 @@ void setup() {
   // Setup WebServer routes for RGB LED control
   server.on("/turnOn", []() {
     isLightOn = true;
-    setStaticColor();
     server.send(200, "text/plain", "Lights turned on");
   });
 
   server.on("/turnOff", []() {
     isLightOn = false;
-    applyColor(0, 0, 0);
     server.send(200, "text/plain", "Lights turned off");
   });
 
