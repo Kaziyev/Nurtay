@@ -3,10 +3,13 @@
 
 #define RED_PIN 18
 #define GREEN_PIN 21
-#define BLUE_PIN 15
+#define BLUE_PIN 2
 
 bool rgbState = false; // Состояние RGB (вкл/выкл)
 bool objectDetected = false; // Флаг для фиксации первого обнаружения
+
+unsigned long previousMillis = 0; // Предыдущее время
+const long debounceInterval = 500; // Интервал устранения дребезга в миллисекундах
 
 void setup() {
   pinMode(TRIG_PIN, OUTPUT);
@@ -27,9 +30,10 @@ void setup() {
 void loop() {
   long distance = getDistance();
 
-  if (distance >= 3 && distance <= 50) { // Если объект находится в диапазоне 3-50 см
-    if (!objectDetected) { // Первое обнаружение объекта
-      objectDetected = true; // Устанавливаем флаг
+  if (distance >= 2 && distance <= 7) { // Если объект в диапазоне 3-50 см
+    unsigned long currentMillis = millis(); // Текущее время
+    if (!objectDetected && (currentMillis - previousMillis >= debounceInterval)) { 
+      objectDetected = true; // Фиксируем обнаружение
       rgbState = !rgbState; // Переключаем состояние RGB
 
       if (rgbState) {
@@ -38,28 +42,23 @@ void loop() {
         turnOffRGB(); // Выключаем RGB
       }
 
-      delay(500); // Небольшая задержка для устранения дребезга
+      previousMillis = currentMillis; // Обновляем время
     }
-  } else { // Если объекта нет в зоне действия
-    objectDetected = false; // Сбрасываем флаг, чтобы зафиксировать новое движение
+  } else {
+    objectDetected = false; // Сбрасываем флаг
   }
 }
 
 long getDistance() {
-  // Отправляем ультразвуковой импульс
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  // Считаем время отклика
-  long duration = pulseIn(ECHO_PIN, HIGH);
-
-  // Переводим длительность в расстояние (см)
+  long duration = pulseIn(ECHO_PIN, HIGH, 20000);
   long distance = duration * 0.034 / 2;
 
-  // Выводим результат в Serial Monitor
   Serial.print("Измеренное расстояние: ");
   Serial.print(distance);
   Serial.println(" см");
