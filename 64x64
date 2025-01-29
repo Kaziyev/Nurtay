@@ -1,0 +1,1 @@
+taskset -c 3 sudo ./demo -D 1 rgba.ppm --led-no-hardware-pulse --led-cols=64 --led-rows=64
