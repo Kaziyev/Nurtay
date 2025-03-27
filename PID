@@ -1,0 +1,84 @@
+#include <Wire.h>
+#include <MPU6050.h>
+
+MPU6050 mpu;
+
+const int dirPin = 2;
+const int stepPin = 3;
+
+float setPoint = 0.0;  // Желаемый угол маятника (вверх)
+float input, output;
+float Kp = 20.0, Ki = 1.0, Kd = 0.5;
+float error, lastError = 0;
+float integral = 0;
+
+unsigned long lastTime = 0;
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+  pinMode(dirPin, OUTPUT);
+  pinMode(stepPin, OUTPUT);
+
+  mpu.initialize();
+  if (!mpu.testConnection()) {
+    Serial.println("MPU6050 connection failed!");
+    while (1);
+  }
+  Serial.println("MPU6050 ready.");
+}
+
+void loop() {
+  // Получение данных с MPU6050
+  int16_t ax, ay, az, gx, gy, gz;
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+
+  // Преобразуем данные акселерометра в угол наклона
+  input = atan2(ay, az) * 180.0 / PI;  // угол в градусах
+
+  // PID расчёт
+  unsigned long now = millis();
+  float dt = (now - lastTime) / 1000.0;
+  lastTime = now;
+
+  error = setPoint - input;
+  integral += error * dt;
+  float derivative = (error - lastError) / dt;
+  output = Kp * error + Ki * integral + Kd * derivative;
+  lastError = error;
+
+  // Выводим значения в Serial Monitor
+  Serial.print("Angle (input): ");
+  Serial.print(input, 2);
+  Serial.print(" | Error: ");
+  Serial.print(error, 2);
+  Serial.print(" | PID Output: ");
+  Serial.print(output, 2);
+  
+  // Определяем направление вращения мотора
+  if (output > 0) {
+    Serial.print(" | Motor Direction: CLOCKWISE");
+  } else {
+    Serial.print(" | Motor Direction: COUNTERCLOCKWISE");
+  }
+
+  Serial.println();
+
+  // Управление шаговым двигателем
+  moveMotor(output);
+
+  delay(10);  // короткая задержка
+}
+
+void moveMotor(float speed) {
+  bool dir = speed > 0;
+  digitalWrite(dirPin, dir);
+
+  int steps = min(abs(speed), 500);  // ограничим скорость
+  for (int i = 0; i < steps; i++) {
+    digitalWrite(stepPin, HIGH);
+    delayMicroseconds(100);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(100);
+  }
+}
