@@ -3,12 +3,12 @@
 
 MPU6050 mpu;
 
-const int dirPin = 2;
+const int dirPin = 4;
 const int stepPin = 3;
 
 float setPoint = 0.0;  // Желаемый угол маятника (вверх)
 float input, output;
-float Kp = 20.0, Ki = 1.0, Kd = 0.5;
+float Kp = 30.0, Ki = 2.0, Kd = 1;
 float error, lastError = 0;
 float integral = 0;
 
@@ -74,11 +74,12 @@ void moveMotor(float speed) {
   bool dir = speed > 0;
   digitalWrite(dirPin, dir);
 
-  int steps = min(abs(speed), 500);  // ограничим скорость
+  int steps = constrain(abs(speed) * 2, 0, 1000);
+  // ограничим скорость
   for (int i = 0; i < steps; i++) {
     digitalWrite(stepPin, HIGH);
-    delayMicroseconds(100);
+    delayMicroseconds(20);
     digitalWrite(stepPin, LOW);
-    delayMicroseconds(100);
+    delayMicroseconds(20);
   }
 }
