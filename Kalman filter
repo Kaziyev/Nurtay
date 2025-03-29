@@ -1,0 +1,159 @@
+#include <Wire.h>
+#include <MPU6050.h>
+
+MPU6050 mpu;
+
+const int dirPin = 4;   // DIR для TB6600
+const int stepPin = 3;  // STEP для TB6600
+
+// Целевой угол маятника (0° – вертикаль)
+float setPoint = 0.0;
+
+// Параметры PID (подбирайте экспериментально)
+float Kp = 30.0, Ki = 2.0, Kd = 1.0;
+float error, lastError = 0;
+float integral = 0;
+
+// Переменные для времени
+unsigned long lastTime = 0;
+
+// Переменные для сигнала управления и фильтрованного угла
+float input, output;
+
+// ---------- ФИЛЬТР КАЛМАНА ----------
+class Kalman {
+public:
+  float Q_angle;
+  float Q_bias;
+  float R_measure;
+  
+  float angle; // фильтрованное значение угла
+  float bias;  // смещение (дрейф)
+  float rate;  // скорректированная угловая скорость
+  
+  float P[2][2];  // матрица ошибок
+
+  Kalman() {
+    Q_angle = 0.001f;
+    Q_bias = 0.003f;
+    R_measure = 0.03f;
+    angle = 0.0f;
+    bias = 0.0f;
+    P[0][0] = 0.0f; P[0][1] = 0.0f;
+    P[1][0] = 0.0f; P[1][1] = 0.0f;
+  }
+
+  float getAngle(float newAngle, float newRate, float dt) {
+    // Прогноз: интегрируем угловую скорость
+    rate = newRate - bias;
+    angle += dt * rate;
+    
+    // Прогнозирование ошибки
+    P[0][0] += dt * (dt * P[1][1] - P[0][1] - P[1][0] + Q_angle);
+    P[0][1] -= dt * P[1][1];
+    P[1][0] -= dt * P[1][1];
+    P[1][1] += Q_bias * dt;
+    
+    // Обновление с использованием измерения
+    float S = P[0][0] + R_measure;
+    float K0 = P[0][0] / S;
+    float K1 = P[1][0] / S;
+    float y = newAngle - angle;
+    angle += K0 * y;
+    bias  += K1 * y;
+    
+    float P00_temp = P[0][0];
+    float P01_temp = P[0][1];
+    P[0][0] -= K0 * P00_temp;
+    P[0][1] -= K0 * P01_temp;
+    P[1][0] -= K1 * P00_temp;
+    P[1][1] -= K1 * P01_temp;
+    
+    return angle;
+  }
+};
+
+Kalman kalmanFilter;
+// ---------- Конец фильтра Калмана ----------
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+  
+  pinMode(dirPin, OUTPUT);
+  pinMode(stepPin, OUTPUT);
+  
+  mpu.initialize();
+  if (!mpu.testConnection()) {
+    Serial.println("MPU6050 connection failed!");
+    while (1);
+  }
+  Serial.println("MPU6050 ready.");
+
+  lastTime = millis();
+}
+
+void loop() {
+  // Считываем данные с MPU6050
+  int16_t ax, ay, az, gx, gy, gz;
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+
+  // Вычисляем угол с помощью акселерометра (в градусах)
+  float accAngle = atan2(ay, az) * 180.0 / PI;
+  
+  // Вычисляем угловую скорость с гироскопа.
+  // Предполагаем, что угол рассчитывается по оси, соответствующей gx.
+  float gyroRate = gx / 131.0;  // для ±250°/с
+  
+  // Расчёт dt
+  unsigned long now = millis();
+  float dt = (now - lastTime) / 1000.0;
+  lastTime = now;
+  
+  // Применяем фильтр Калмана для объединения показаний
+  input = kalmanFilter.getAngle(accAngle, gyroRate, dt);
+  
+  // Расчёт PID
+  error = setPoint - input;
+  integral += error * dt;
+  float derivative = (error - lastError) / dt;
+  output = Kp * error + Ki * integral + Kd * derivative;
+  lastError = error;
+
+  // Выводим данные в Serial Monitor
+  Serial.print("Angle (filtered): ");
+  Serial.print(input, 2);
+  Serial.print(" | Error: ");
+  Serial.print(error, 2);
+  Serial.print(" | PID Output: ");
+  Serial.print(output, 2);
+  
+  if (output > 0) {
+    Serial.print(" | Motor Direction: CLOCKWISE");
+  } else {
+    Serial.print(" | Motor Direction: COUNTERCLOCKWISE");
+  }
+  Serial.println();
+  
+  // Управление шаговым двигателем через TB6600
+  moveMotor(output);
+  
+  delay(10);  // короткая задержка
+}
+
+void moveMotor(float speed) {
+  // Определяем направление вращения
+  bool dir = speed > 0;
+  digitalWrite(dirPin, dir);
+  
+  // Преобразуем скорость в число шагов.
+  // Здесь коэффициент масштабирования подобран экспериментально.
+  int steps = constrain(abs(speed) * 2, 0, 1000);
+  
+  for (int i = 0; i < steps; i++) {
+    digitalWrite(stepPin, HIGH);
+    delayMicroseconds(20);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(20);
+  }
+}
