@@ -1,0 +1,112 @@
+#include <Wire.h>
+#include "MPU6050.h"
+
+class Kalman {
+public:
+  float Q_angle = 0.001;
+  float Q_bias = 0.003;
+  float R_measure = 0.03;
+  float angle = 0.0;
+  float bias = 0.0;
+  float rate = 0.0;
+  float P[2][2] = { {0, 0}, {0, 0} };
+
+  float getAngle(float newAngle, float newRate, float dt) {
+    rate = newRate - bias;
+    angle += dt * rate;
+
+    P[0][0] += dt * (dt * P[1][1] - P[0][1] - P[1][0] + Q_angle);
+    P[0][1] -= dt * P[1][1];
+    P[1][0] -= dt * P[1][1];
+    P[1][1] += Q_bias * dt;
+
+    float S = P[0][0] + R_measure;
+    float K0 = P[0][0] / S;
+    float K1 = P[1][0] / S;
+    float y = newAngle - angle;
+    angle += K0 * y;
+    bias  += K1 * y;
+
+    float P00_temp = P[0][0];
+    float P01_temp = P[0][1];
+    P[0][0] -= K0 * P00_temp;
+    P[0][1] -= K0 * P01_temp;
+    P[1][0] -= K1 * P00_temp;
+    P[1][1] -= K1 * P01_temp;
+
+    return angle;
+  }
+};
+
+#define STEP_PIN 3
+#define DIR_PIN 4
+
+MPU6050 mpu;
+Kalman kalman;
+
+float offsetY = 0.0;
+float setpoint = 0.0;
+float Kp = 6.0, Ki = 0.0, Kd = 2.0;
+float integral = 0.0, previousError = 0.0;
+bool direction = true;
+
+unsigned long prevTime = 0;
+unsigned long lastMPUread = 0;
+
+void setup() {
+  Wire.begin();
+  Serial.begin(115200);
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT);
+
+  mpu.initialize();
+  if (!mpu.testConnection()) {
+    Serial.println("MPU6050 не найден!");
+    while (1);
+  }
+
+  int16_t ax, ay, az, gx, gy, gz;
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+  offsetY = atan2(ax, az) * 180.0 / PI;
+  kalman.angle = 0.0;
+  prevTime = millis();
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  // === MPU читаем только раз в 10 мс ===
+  if (now - lastMPUread >= 10) {
+    lastMPUread = now;
+
+    int16_t ax, ay, az, gx, gy, gz;
+    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+
+    float dt = (now - prevTime) / 1000.0;
+    prevTime = now;
+
+    float accAngle = atan2(ax, az) * 180.0 / PI - offsetY;
+    float gyroRate = gy / 131.0;
+    float angle = kalman.getAngle(accAngle, gyroRate, dt);
+
+    float error = setpoint - angle;
+    integral += error * dt;
+    float derivative = (error - previousError) / dt;
+    float output = Kp * error + Ki * integral + Kd * derivative;
+    previousError = error;
+      // === Вывод в монитор ===
+  Serial.print("Угол: ");
+  Serial.print(angle, 2);
+  Serial.print("° | Направление: ");
+  Serial.println(direction ? "ВПЕРЁД" : "НАЗАД");
+
+    direction = (output > 0);
+    digitalWrite(DIR_PIN, direction);
+  }
+
+  // === ШАГИ всегда ===
+  digitalWrite(STEP_PIN, HIGH);
+  delayMicroseconds(50);
+  digitalWrite(STEP_PIN, LOW);
+  delayMicroseconds(50);
+}
