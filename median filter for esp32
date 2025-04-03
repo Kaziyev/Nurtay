@@ -1,0 +1,76 @@
+#include <Wire.h>
+#include "MPU6050.h"
+
+// Инициализация MPU6050
+MPU6050 mpu;
+
+// Размер окна медианного фильтра
+#define WINDOW_SIZE 5
+float angleHistory[WINDOW_SIZE];  // Массив для хранения предыдущих углов
+int angleIndex = 0;               // Индекс для записи нового угла в массив
+
+// Переменные для углов
+float accAngleY;
+float filteredAngleY;
+
+// Инициализация I2C
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(21, 22);  // SDA на пине 21, SCL на пине 22 для ESP32
+
+  mpu.initialize();
+  if (!mpu.testConnection()) {
+    Serial.println("Не удалось подключиться к MPU6050");
+    while (1);
+  }
+  Serial.println("MPU6050 готов.");
+
+  // Инициализация массива с углами
+  for (int i = 0; i < WINDOW_SIZE; i++) {
+    angleHistory[i] = 0.0;
+  }
+}
+
+void loop() {
+  int16_t ax, ay, az, gx, gy, gz;
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+
+  // Вычисление угла по акселерометру по оси Y
+  accAngleY = atan2(ay, sqrt(ax * ax + az * az)) * 180.0 / PI;
+  
+  // Добавление нового угла в массив
+  angleHistory[angleIndex] = accAngleY;
+  
+  // Увеличиваем индекс для следующего угла, если превышен размер массива, начинаем с нуля
+  angleIndex++;
+  if (angleIndex >= WINDOW_SIZE) {
+    angleIndex = 0;
+  }
+
+  // Медианный фильтр: сортировка массива и выбор медианы
+  float sortedAngles[WINDOW_SIZE];
+  for (int i = 0; i < WINDOW_SIZE; i++) {
+    sortedAngles[i] = angleHistory[i];
+  }
+
+  // Сортировка массива углов
+  for (int i = 0; i < WINDOW_SIZE - 1; i++) {
+    for (int j = i + 1; j < WINDOW_SIZE; j++) {
+      if (sortedAngles[i] > sortedAngles[j]) {
+        // Обмен значениями
+        float temp = sortedAngles[i];
+        sortedAngles[i] = sortedAngles[j];
+        sortedAngles[j] = temp;
+      }
+    }
+  }
+
+  // Медиана - это среднее значение в отсортированном массиве
+  filteredAngleY = sortedAngles[WINDOW_SIZE / 2];
+
+  // Выводим отфильтрованный угол на серийный монитор
+  Serial.print("Filtered Angle Y: ");
+  Serial.println(filteredAngleY, 2);
+
+  delay(50);
+}
