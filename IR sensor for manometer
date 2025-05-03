@@ -1,0 +1,10 @@
+const int signalPin = 13;
+void setup () {
+  pinMode(signalPin, INPUT);
+  Serial.begin(115200);
+}
+
+void loop(){
+  int value = digitalRead(signalPin);
+  Serial.println(value);
+}
