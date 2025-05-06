@@ -8,3 +8,193 @@ void loop(){
   int value = digitalRead(signalPin);
   Serial.println(value);
 }
+
+Working code on Manometer
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+
+const char* ssid = "Borealis Laboratory";
+const char* password = "artofwar3";
+
+bool hasResult = false;
+bool hasResult2 = false;
+const int signalPin = 13;
+const int signalPin1 = 12;
+const int signalPin2 = 14;
+
+unsigned long startTime = 0;
+unsigned long elapsedTime = 0;
+unsigned long elapsedTime2bar = 0;
+bool running = false;
+bool running2 = false;
+
+int prevValue = LOW;
+int prevValue1 = LOW;
+int prevValue2 = LOW;
+
+AsyncWebServer server(80);
+const char htmlPage[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Speed Timer</title>
+  <style>
+    body { font-family: Arial; text-align: center; margin-top: 50px; }
+    #timer { font-size: 2em; color: darkblue; margin-bottom: 20px; }
+    button { 
+      background-color: #4CAF50; 
+      border: none; 
+      color: white; 
+      padding: 15px 32px; 
+      text-align: center; 
+      text-decoration: none; 
+      display: inline-block; 
+      font-size: 16px; 
+      margin: 4px 2px; 
+      cursor: pointer; 
+      border-radius: 4px;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+  </style>
+</head>
+<body>
+  <h1>Последнее измеренное время</h1>
+  <div id="timer">Ожидание...</div>
+  <button id="downloadBtn">Скачать данные (Excel)</button>
+  
+  <script>
+    function updateTimer() {
+      fetch('/data')
+        .then(response => response.text())
+        .then(data => {
+          document.getElementById('timer').innerText = data;
+        });
+    }
+    
+    // Обновляем данные каждую секунду
+    setInterval(updateTimer, 1000);
+    updateTimer(); // Вызываем сразу при загрузке страницы
+    
+    // Обработчик для кнопки скачивания
+    document.getElementById('downloadBtn').addEventListener('click', function() {
+      // Получаем данные и скачиваем файл
+      fetch('/excel')
+        .then(response => response.blob())
+        .then(blob => {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+          a.download = 'speed_data.csv';
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+        });
+    });
+  </script>
+</body>
+</html>
+)rawliteral";
+
+void setup() {
+  pinMode(signalPin, INPUT);
+  pinMode(signalPin1, INPUT);
+  pinMode(signalPin2, INPUT);
+  Serial.begin(115200);
+  
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected to WiFi");
+  Serial.println(WiFi.localIP());
+
+  // Основная страница
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", htmlPage);
+  });
+
+  // Данные для отображения
+  server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
+    String result = "";
+    if (hasResult) {
+      result += "1.5 bar: " + String(elapsedTime / 1000.0) + " сек\n";
+    }
+    if (hasResult2) {
+      result += "2 bar: " + String(elapsedTime2bar / 1000.0) + " сек\n";
+    }
+    if (result == "") result = "Ожидание...";
+    request->send(200, "text/plain", result);
+  });
+
+  // Данные для скачивания в формате CSV (Excel)
+server.on("/excel", HTTP_GET, [](AsyncWebServerRequest *request){
+  String filename = "speed_data.csv";
+  
+  // Используем точку с запятой в качестве разделителя (работает лучше в Excel)
+  String csv = "Pressure (bar);Time (seconds)\r\n";
+  
+  if (hasResult) {
+    csv += "1.5bar;" + String(elapsedTime / 1000.0, 3) + "\r\n";
+  } else {
+    csv += "1.5bar;Not measured\r\n";
+  }
+  
+  if (hasResult2) {
+    csv += "2.0bar;" + String(elapsedTime2bar / 1000.0, 3) + "\r\n";
+  } else {
+    csv += "2.0bar;Not measured\r\n";
+  }
+  
+  AsyncWebServerResponse *response = request->beginResponse(200, "text/csv", csv);
+  response->addHeader("Content-Disposition", "attachment; filename=" + filename);
+  request->send(response);
+});
+  server.begin();
+}
+
+void loop() {
+  int value = digitalRead(signalPin);
+  int value1 = digitalRead(signalPin1);
+  int value2 = digitalRead(signalPin2);
+
+  // Старт
+  if (value == HIGH && prevValue == LOW) {
+    startTime = millis();
+    running = true;
+    delay(1000); // чтобы не сразу перезапустилось
+    hasResult = false;
+    hasResult2 = false;
+    Serial.println("Timer restarted");
+  }
+  prevValue = value;
+
+  // 1.5 bar (датчик 12)
+  if (value1 == HIGH && prevValue1 == LOW && running) {
+    elapsedTime = millis() - startTime;
+    hasResult = true;
+    Serial.print("1.5 bar: ");
+    Serial.print(elapsedTime / 1000.0);
+    Serial.println(" sec");
+  }
+  prevValue1 = value1;
+
+  // 2.0 bar (датчик 14)
+  if (value2 == HIGH && prevValue2 == LOW && running) {
+    elapsedTime2bar = millis() - startTime;
+    hasResult2 = true;
+    Serial.print("2.0 bar: ");
+    Serial.print(elapsedTime2bar / 1000.0);
+    Serial.println(" sec");
+  }
+  prevValue2 = value2;
+
+  // Остановка, если оба значения получены
+  if (hasResult && hasResult2) {
+    running = false;
+  }
+}
