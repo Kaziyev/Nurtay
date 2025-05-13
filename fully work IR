@@ -1,3 +1,4 @@
+
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <time.h>
@@ -7,20 +8,40 @@
 const char* ssid = "Borealis Laboratory";
 const char* password = "artofwar3";
 
-const int signalPin = 13;  // 0 bar
-const int signalPin1 = 12; // 1.5 bar
-const int signalPin2 = 14; // 2.0 bar
+// Соответствие пинов и уровней давления
 
-// Векторы для хранения всех измерений
-std::vector<String> times0bar;
-std::vector<String> times15bar;
-std::vector<String> times20bar;
 
-int prevValue = LOW;
-int prevValue1 = LOW;
-int prevValue2 = LOW;
+struct Sensor {
+  int pin;
+  float pressure;
+  std::vector<String> times;
+  int prevValue;
+  unsigned long lastReadTime;
+
+  Sensor(int _pin, float _pressure) {
+    pin = _pin;
+    pressure = _pressure;
+    prevValue = LOW;
+    lastReadTime = 0;
+  }
+};
+
+// Все датчики давления
+Sensor sensors[] = {
+  Sensor(13, 0.0),
+  Sensor(12, 0.5),
+  Sensor(14, 1.0),
+  Sensor(27, 1.5),
+  Sensor(26, 2.0),
+  Sensor(25, 2.5),
+  Sensor(33, 3.0),
+  Sensor(32, 3.5),
+  Sensor(35, 4.0),
+  Sensor(34, 4.5)
+};
 
 AsyncWebServer server(80);
+
 const char htmlPage[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -30,35 +51,35 @@ const char htmlPage[] PROGMEM = R"rawliteral(
   <style>
     body { font-family: Arial; text-align: center; margin-top: 30px; }
     .container { max-width: 900px; margin: 0 auto; }
-    .data-table { 
-      width: 100%; 
-      border-collapse: collapse; 
-      margin: 20px 0; 
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
       font-size: 1.2em;
     }
-    .data-table th { 
-      background-color: #4CAF50; 
-      color: white; 
-      text-align: left; 
+    .data-table th {
+      background-color: #4CAF50;
+      color: white;
+      text-align: left;
       padding: 12px 15px;
     }
-    .data-table td { 
-      border: 1px solid #ddd; 
-      padding: 12px 15px; 
+    .data-table td {
+      border: 1px solid #ddd;
+      padding: 12px 15px;
       text-align: left;
     }
     .data-table tr:nth-child(even) { background-color: #f2f2f2; }
-    button { 
-      background-color: #4CAF50; 
-      border: none; 
-      color: white; 
-      padding: 12px 28px; 
-      text-align: center; 
-      text-decoration: none; 
-      display: inline-block; 
-      font-size: 16px; 
-      margin: 10px 5px; 
-      cursor: pointer; 
+    button {
+      background-color: #4CAF50;
+      border: none;
+      color: white;
+      padding: 12px 28px;
+      text-align: center;
+      text-decoration: none;
+      display: inline-block;
+      font-size: 16px;
+      margin: 10px 5px;
+      cursor: pointer;
       border-radius: 4px;
     }
     button:hover { background-color: #45a049; }
@@ -71,17 +92,14 @@ const char htmlPage[] PROGMEM = R"rawliteral(
 <body>
   <div class="container">
     <h1>Данные измерений давления</h1>
-    
     <div class="buttons">
       <button id="downloadBtn">Скачать данные (Excel)</button>
       <button id="resetBtn" class="reset-btn">Очистить все данные</button>
     </div>
-    
     <div id="data-container">
       Загрузка данных...
     </div>
   </div>
-  
   <script>
     function updateData() {
       fetch('/data')
@@ -90,12 +108,8 @@ const char htmlPage[] PROGMEM = R"rawliteral(
           document.getElementById('data-container').innerHTML = data;
         });
     }
-    
-    // Обновляем данные каждую секунду
     setInterval(updateData, 1000);
-    updateData(); // Вызываем сразу при загрузке страницы
-    
-    // Обработчик для кнопки скачивания
+    updateData();
     document.getElementById('downloadBtn').addEventListener('click', function() {
       fetch('/excel')
         .then(response => response.blob())
@@ -110,15 +124,13 @@ const char htmlPage[] PROGMEM = R"rawliteral(
           window.URL.revokeObjectURL(url);
         });
     });
-    
-    // Обработчик для кнопки очистки данных
     document.getElementById('resetBtn').addEventListener('click', function() {
       if (confirm('Вы уверены, что хотите удалить все данные?')) {
         fetch('/reset')
           .then(response => response.text())
           .then(data => {
             alert('Все данные удалены');
-            updateData(); // Обновляем отображение
+            updateData();
           });
       }
     });
@@ -127,29 +139,20 @@ const char htmlPage[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-// Функция для получения текущей даты и времени в Казахстане с миллисекундами
 String getKazakhstanTimeWithMs() {
   char timeStr[30];
   struct timeval tv;
   gettimeofday(&tv, NULL);
-  
   time_t now = tv.tv_sec;
   struct tm* timeinfo = localtime(&now);
-  
-  // Создаем строку с часами, минутами, секундами и миллисекундами
-  sprintf(timeStr, "%02d:%02d:%02d.%03d", 
-          timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, 
-          (int)(tv.tv_usec / 1000));  // Преобразуем микросекунды в миллисекунды
-          
+  sprintf(timeStr, "%02d:%02d:%02d.%03d", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, (int)(tv.tv_usec / 1000));
   return String(timeStr);
 }
 
 void setup() {
-  pinMode(signalPin, INPUT);
-  pinMode(signalPin1, INPUT);
-  pinMode(signalPin2, INPUT);
   Serial.begin(115200);
-  
+  for (auto& sensor : sensors) pinMode(sensor.pin, INPUT);
+
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -158,83 +161,48 @@ void setup() {
   Serial.println("\nConnected to WiFi");
   Serial.println(WiFi.localIP());
 
-  // Настройка времени для Казахстана (UTC+5)
   configTime(5 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
-  // Основная страница
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send_P(200, "text/html", htmlPage);
   });
 
-  // Данные для отображения в табличном формате
   server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
     String result = "<table class='data-table'>";
     result += "<tr><th>Pressure (bar)</th><th>Time</th></tr>";
-    
-    // Добавляем записи 0.0 bar
-    for (int i = 0; i < times0bar.size(); i++) {
-      result += "<tr><td>0.0 bar</td><td>" + times0bar[i] + "</td></tr>";
+    bool hasData = false;
+    for (auto& sensor : sensors) {
+      for (auto& t : sensor.times) {
+        result += "<tr><td>" + String(sensor.pressure, 1) + " bar</td><td>" + t + "</td></tr>";
+        hasData = true;
+      }
     }
-    
-    // Добавляем записи 1.5 bar
-    for (int i = 0; i < times15bar.size(); i++) {
-      result += "<tr><td>1.5 bar</td><td>" + times15bar[i] + "</td></tr>";
-    }
-    
-    // Добавляем записи 2.0 bar
-    for (int i = 0; i < times20bar.size(); i++) {
-      result += "<tr><td>2.0 bar</td><td>" + times20bar[i] + "</td></tr>";
-    }
-    
-    if (times0bar.size() == 0 && times15bar.size() == 0 && times20bar.size() == 0) {
+    if (!hasData) {
       result += "<tr><td colspan='2' style='text-align:center;'>Нет данных</td></tr>";
     }
-    
     result += "</table>";
     request->send(200, "text/html", result);
   });
 
-  // Данные для скачивания в формате CSV (Excel)
   server.on("/excel", HTTP_GET, [](AsyncWebServerRequest *request){
-    String filename = "pressure_data.csv";
-    
-    // Используем точку с запятой в качестве разделителя
     String csv = "Pressure (bar);Time\r\n";
-    
-    // Добавляем все записи 0.0 bar
-    for (int i = 0; i < times0bar.size(); i++) {
-      csv += "0.0bar;" + times0bar[i] + "\r\n";
+    for (auto& sensor : sensors) {
+      for (auto& t : sensor.times) {
+        csv += String(sensor.pressure, 1) + "bar;" + t + "\r\n";
+      }
     }
-    
-    // Добавляем все записи 1.5 bar
-    for (int i = 0; i < times15bar.size(); i++) {
-      csv += "1.5bar;" + times15bar[i] + "\r\n";
+    if (csv.length() <= 20) {
+      for (auto& sensor : sensors) {
+        csv += String(sensor.pressure, 1) + "bar;Not measured\r\n";
+      }
     }
-    
-    // Добавляем все записи 2.0 bar
-    for (int i = 0; i < times20bar.size(); i++) {
-      csv += "2.0bar;" + times20bar[i] + "\r\n";
-    }
-    
-    // Если нет данных, добавляем пустые строки
-    if (times0bar.size() == 0 && times15bar.size() == 0 && times20bar.size() == 0) {
-      csv += "0.0bar;Not measured\r\n";
-      csv += "1.5bar;Not measured\r\n";
-      csv += "2.0bar;Not measured\r\n";
-    }
-    
     AsyncWebServerResponse *response = request->beginResponse(200, "text/csv", csv);
-    response->addHeader("Content-Disposition", "attachment; filename=" + filename);
+    response->addHeader("Content-Disposition", "attachment; filename=pressure_data.csv");
     request->send(response);
   });
 
-  // Обработчик для сброса всех данных
   server.on("/reset", HTTP_GET, [](AsyncWebServerRequest *request){
-    // Очищаем все векторы с данными
-    times0bar.clear();
-    times15bar.clear();
-    times20bar.clear();
-    
+    for (auto& sensor : sensors) sensor.times.clear();
     Serial.println("All data has been reset");
     request->send(200, "text/plain", "OK");
   });
@@ -243,34 +211,21 @@ void setup() {
 }
 
 void loop() {
-  int value = digitalRead(signalPin);
-  int value1 = digitalRead(signalPin1);
-  int value2 = digitalRead(signalPin2);
+  unsigned long currentMillis = millis();
 
-  // 0.0 bar (датчик 13)
-  if (value == HIGH && prevValue == LOW) {
-    String currentTime = getKazakhstanTimeWithMs();
-    times0bar.push_back(currentTime);
-    Serial.print("0.0 bar time: ");
-    Serial.println(currentTime);
-  }
-  prevValue = value;
+  for (auto& sensor : sensors) {
+    int value = digitalRead(sensor.pin);
 
-  // 1.5 bar (датчик 12)
-  if (value1 == HIGH && prevValue1 == LOW) {
-    String currentTime = getKazakhstanTimeWithMs();
-    times15bar.push_back(currentTime);
-    Serial.print("1.5 bar time: ");
-    Serial.println(currentTime);
-  }
-  prevValue1 = value1;
+    if (value == HIGH && sensor.prevValue == LOW) {
+      // Проверка задержки
+      if (currentMillis - sensor.lastReadTime >= 5000) {
+        String t = getKazakhstanTimeWithMs();
+        sensor.times.push_back(t);
+        sensor.lastReadTime = currentMillis;
+        Serial.printf("%.1f bar time: %s\n", sensor.pressure, t.c_str());
+      }
+    }
 
-  // 2.0 bar (датчик 14)
-  if (value2 == HIGH && prevValue2 == LOW) {
-    String currentTime = getKazakhstanTimeWithMs();
-    times20bar.push_back(currentTime);
-    Serial.print("2.0 bar time: ");
-    Serial.println(currentTime);
+    sensor.prevValue = value;
   }
-  prevValue2 = value2;
 }
